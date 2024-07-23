@@ -4,7 +4,11 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <ctime>
+#include <thread>
+#include <atomic>
+#include <signal.h>
 
+// Using individual declarations to avoid std:: prefixes
 using namespace std;
 
 // Define the message header structure
@@ -19,6 +23,15 @@ struct MessageHeader
     uint16_t payload_length;
     uint16_t checksum;
 };
+
+// Atomic flag to indicate running state
+atomic<bool> running(true);
+
+// Function to handle SIGINT signal
+void signalHandler(int signum)
+{
+    running = false;
+}
 
 // Function to calculate checksum
 uint16_t calculateChecksum(const uint8_t *data, size_t length)
@@ -72,30 +85,42 @@ void sendChatMessage(int sock, const string &message)
     delete[] buffer;
 }
 
-// Function to handle different server responses
-void handleServerResponse(int sock)
+// Function to handle server responses
+void handleServerResponse(int sock, atomic<bool> &running)
 {
-    MessageHeader response;
-    while (read(sock, &response, sizeof(response)) > 0)
+    char buffer[1024];
+    while (running)
     {
-        switch (response.message_type)
+        int bytesRead = recv(sock, buffer, sizeof(buffer), 0);
+        if (bytesRead > 0)
         {
-        case 2: // ON_RES
-            cout << "Received online status response" << endl;
-            break;
-        case 4: // ACK
-            cout << "Received ACK for message ID: " << response.message_id << endl;
-            break;
-        case 5: // NACK
-            cerr << "Received NACK for message ID: " << response.message_id << endl;
-            break;
-        case 6: // ERR
-            cout << "Received error message" << endl;
-            // Handle error message (payload contains error description)
-            break;
-        default:
-            cerr << "Unknown message type received" << endl;
-            break;
+            MessageHeader *header = reinterpret_cast<MessageHeader *>(buffer);
+            string message(buffer + sizeof(MessageHeader), header->payload_length);
+
+            switch (header->message_type)
+            {
+            case 2: // ON_RES
+                cout << "\nServer: Received online status response" << endl;
+                break;
+            case 3: // CHAT
+                cout << "\nServer: " << message << endl;
+                break;
+            case 4: // ACK
+                cout << "\nServer: Received ACK for message ID: " << header->message_id << endl;
+                break;
+            case 5: // NACK
+                cerr << "\nServer: Received NACK for message ID: " << header->message_id << endl;
+                break;
+            case 6: // ERR
+                cout << "\nServer: Received error message: " << message << endl;
+                break;
+            default:
+                cerr << "\nServer: Unknown message type received" << endl;
+                break;
+            }
+
+            cout << "Enter message: ";
+            cout.flush();
         }
     }
 }
@@ -105,6 +130,9 @@ int main()
     int sock = 0;
     struct sockaddr_in serv_addr;
 
+    // Register the signal handler for Ctrl+C (SIGINT)
+    signal(SIGINT, signalHandler);
+
     // Step 1: Create a socket
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
@@ -113,26 +141,46 @@ int main()
     }
 
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(8080);                   // Port number for the server - server will be listening on port 8080
-    serv_addr.sin_addr.s_addr = inet_addr("127.0.0.1"); // Server IP address, REPLACE this using server IP found using ifconfig. Client and server must be connected to the same wifi network
+    serv_addr.sin_port = htons(8080);                       // Port number for the server
+    serv_addr.sin_addr.s_addr = inet_addr("192.168.1.165"); // Server IP address, REPLACE this using server IP (use Windows wireless IP forwarded to WSL IP). Client and server must be connected to the same wifi network
 
-    // Step 2: Connect to the server
+    // Step 2: Connect to the server, -1 means error
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
     {
-        cerr << "Connection failed" << endl;
+        cerr << "Connection failed: " << strerror(errno) << endl; // Print the error message
+        close(sock);                                              // Close the socket to clean up resources
         return -1;
     }
+
+    cout << "Connection successful!" << endl;
 
     // Step 3: Send an online status request
     sendOnlineStatusRequest(sock);
 
-    // Step 4: Send a chat message
-    sendChatMessage(sock, "Hello, this is a test message!");
+    // Step 4: Create a thread to handle server responses
+    thread responseThread(handleServerResponse, sock, ref(running));
 
-    // Step 5: Handle server responses
-    handleServerResponse(sock);
+    // Step 5: Main loop to send chat messages
+    string message;
 
-    // Step 6: Close the socket
+    while (running)
+    {
+        cout << "Enter message: ";
+        getline(cin, message);
+
+        if (message == "quit")
+        {
+            running = false;
+            break;
+        }
+
+        cout << "Client: " << message << endl;
+        sendChatMessage(sock, message);
+    }
+
+    // Step 6: Close the socket and clean up
+    running = false;
+    responseThread.join();
     close(sock);
 
     return 0;
