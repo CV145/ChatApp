@@ -142,7 +142,13 @@ int main()
 
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(8080);                       // Port number for the server
-    serv_addr.sin_addr.s_addr = inet_addr("192.168.1.165"); // Server IP address, REPLACE this using server IP (use Windows wireless IP forwarded to WSL IP). Client and server must be connected to the same wifi network
+    serv_addr.sin_addr.s_addr = inet_addr("10.176.193.27"); // Server IP address, REPLACE this using server IP (use Windows wireless IP forwarded to WSL IP). Client and server must be connected to the same wifi network
+
+    /*
+    In socket programming, the client connects to the server program running on a specific device by targeting the server's IP address and port number.
+
+    The port number specifies the specific service or application on the server device that the client wants to connect to. For example, 8080 is the port where the server program is listening for incoming connections.
+    */
 
     // Step 2: Connect to the server, -1 means error
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
@@ -153,6 +159,34 @@ int main()
     }
 
     cout << "Connection successful!" << endl;
+
+    // Get and display local socket information
+    sockaddr_in localAddress;
+    socklen_t localAddressLen = sizeof(localAddress);
+    if (getsockname(sock, (struct sockaddr *)&localAddress, &localAddressLen) == -1)
+    {
+        cerr << "Error getting local socket information: " << strerror(errno) << endl;
+    }
+    else
+    {
+        char localIP[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &localAddress.sin_addr, localIP, sizeof(localIP));
+        cout << "Local IP: " << localIP << ", Local Port: " << ntohs(localAddress.sin_port) << endl;
+    }
+
+    // Get and display remote socket information
+    sockaddr_in remoteAddress;
+    socklen_t remoteAddressLen = sizeof(remoteAddress);
+    if (getpeername(sock, (struct sockaddr *)&remoteAddress, &remoteAddressLen) == -1)
+    {
+        cerr << "Error getting remote socket information: " << strerror(errno) << endl;
+    }
+    else
+    {
+        char remoteIP[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &remoteAddress.sin_addr, remoteIP, sizeof(remoteIP));
+        cout << "Connected to IP: " << remoteIP << ", Port: " << ntohs(remoteAddress.sin_port) << endl;
+    }
 
     // Step 3: Send an online status request
     sendOnlineStatusRequest(sock);
@@ -166,7 +200,7 @@ int main()
     while (running)
     {
         cout << "Enter message: ";
-        getline(cin, message);
+        getline(cin, message); // TODO: make this non-blocking
 
         if (message == "quit")
         {
