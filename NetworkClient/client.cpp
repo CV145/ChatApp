@@ -5,8 +5,6 @@
 #include <unistd.h>
 #include <ctime>
 #include <thread>
-#include <atomic>
-#include <signal.h>
 
 // Using individual declarations to avoid std:: prefixes
 using namespace std;
@@ -23,15 +21,6 @@ struct MessageHeader
     uint16_t payload_length;
     uint16_t checksum;
 };
-
-// Atomic flag to indicate running state
-atomic<bool> running(true);
-
-// Function to handle SIGINT signal
-void signalHandler(int signum)
-{
-    running = false;
-}
 
 // Function to calculate checksum
 uint16_t calculateChecksum(const uint8_t *data, size_t length)
@@ -86,10 +75,10 @@ void sendChatMessage(int sock, const string &message)
 }
 
 // Function to handle server responses
-void handleServerResponse(int sock, atomic<bool> &running)
+void handleServerResponse(int sock)
 {
     char buffer[1024];
-    while (running)
+    while (true)
     {
         int bytesRead = recv(sock, buffer, sizeof(buffer), 0);
         if (bytesRead > 0)
@@ -129,9 +118,6 @@ int main()
 {
     int sock = 0;
     struct sockaddr_in serv_addr;
-
-    // Register the signal handler for Ctrl+C (SIGINT)
-    signal(SIGINT, signalHandler);
 
     // Step 1: Create a socket
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
@@ -192,19 +178,18 @@ int main()
     sendOnlineStatusRequest(sock);
 
     // Step 4: Create a thread to handle server responses
-    thread responseThread(handleServerResponse, sock, ref(running));
+    thread responseThread(handleServerResponse, sock);
 
     // Step 5: Main loop to send chat messages
     string message;
 
-    while (running)
+    while (true)
     {
         cout << "Enter message: ";
         getline(cin, message); // TODO: make this non-blocking
 
         if (message == "quit")
         {
-            running = false;
             break;
         }
 
@@ -213,9 +198,8 @@ int main()
     }
 
     // Step 6: Close the socket and clean up
-    running = false;
-    responseThread.join();
     close(sock);
+    responseThread.join();
 
     return 0;
 }
