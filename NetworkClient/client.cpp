@@ -55,6 +55,8 @@ void sendChatMessage(int sock, const string &message)
     MessageHeader header;
     header.header_length = sizeof(MessageHeader);
     header.message_type = 3; // CHAT
+
+    // Set the current time as timestamp
     header.timestamp = static_cast<uint32_t>(time(nullptr));
     header.sender_id = 1;      // Example sender ID
     header.receiver_id = 2;    // Example receiver ID
@@ -74,7 +76,8 @@ void sendChatMessage(int sock, const string &message)
     delete[] buffer;
 }
 
-// Function to handle server responses
+// Function to handle server responses/retrieve msgs
+// Different ways to respond depending on msgs type
 void handleServerResponse(int sock)
 {
     char buffer[1024];
@@ -84,27 +87,36 @@ void handleServerResponse(int sock)
         if (bytesRead > 0)
         {
             MessageHeader *header = reinterpret_cast<MessageHeader *>(buffer);
-            string message(buffer + sizeof(MessageHeader), header->payload_length);
 
+            // Convert timestamp to human-readable format
+            time_t raw_time = header->timestamp;
+            struct tm *time_info = localtime(&raw_time);
+            char time_str[20];
+            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", time_info);
+
+            // Display the timestamp and message content
+            cout << "\n[" << time_str << "]: ";
+
+            string message(buffer + sizeof(MessageHeader), header->payload_length);
             switch (header->message_type)
             {
             case 2: // ON_RES
-                cout << "\nServer: Received online status response" << endl;
+                cout << "Server: Received online status response" << endl;
                 break;
             case 3: // CHAT
-                cout << "\nServer: " << message << endl;
+                cout << "Server: " << message << endl;
                 break;
             case 4: // ACK
-                cout << "\nServer: Received ACK for message ID: " << header->message_id << endl;
+                cout << "Server: Received ACK for message ID: " << header->message_id << endl;
                 break;
             case 5: // NACK
-                cerr << "\nServer: Received NACK for message ID: " << header->message_id << endl;
+                cerr << "Server: Received NACK for message ID: " << header->message_id << endl;
                 break;
             case 6: // ERR
-                cout << "\nServer: Received error message: " << message << endl;
+                cout << "Server: Received error message: " << message << endl;
                 break;
             default:
-                cerr << "\nServer: Unknown message type received" << endl;
+                cerr << "Server: Unknown message type received" << endl;
                 break;
             }
 
@@ -127,8 +139,8 @@ int main()
     }
 
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(8080);                       // Port number for the server
-    serv_addr.sin_addr.s_addr = inet_addr("10.176.193.27"); // Server IP address, REPLACE this using server IP (use Windows wireless IP forwarded to WSL IP). Client and server must be connected to the same wifi network
+    serv_addr.sin_port = htons(8080);                   // Port number for the server
+    serv_addr.sin_addr.s_addr = inet_addr("127.0.0.1"); // Server IP address, REPLACE this using server IP (use Windows wireless IP forwarded to WSL IP). Client and server must be connected to the same wifi network
 
     /*
     In socket programming, the client connects to the server program running on a specific device by targeting the server's IP address and port number.
@@ -178,7 +190,8 @@ int main()
     sendOnlineStatusRequest(sock);
 
     // Step 4: Create a thread to handle server responses
-    thread responseThread(handleServerResponse, sock);
+    // Threads allow the client to send and receive messages at the same time without blocking either operation aka listen for server msgs and send msgs at the same time
+    thread responseThread(handleServerResponse, sock); // This thread runs the 'handleServerResponse' function which gets 'sock' as input
 
     // Step 5: Main loop to send chat messages
     string message;
@@ -193,12 +206,21 @@ int main()
             break;
         }
 
-        cout << "Client: " << message << endl;
+        // Capture the current time
+        time_t raw_time = time(nullptr);
+        struct tm *time_info = localtime(&raw_time);
+        char time_str[20];
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", time_info);
+
+        // Display the timestamp and message
+        cout << "Client [" << time_str << "]: " << message << endl;
         sendChatMessage(sock, message);
     }
 
     // Step 6: Close the socket and clean up
     close(sock);
+
+    // join() - wait for thread to finish execution
     responseThread.join();
 
     return 0;
