@@ -21,29 +21,14 @@ struct MessageHeader
     uint16_t payload_length;
 };
 
-// Function to send an online status request
-void sendOnlineStatusRequest(int sock)
-{
-    MessageHeader header;
-    header.header_length = sizeof(MessageHeader);
-    header.message_type = 1; // ON_REQ
-    header.timestamp = static_cast<uint32_t>(time(nullptr));
-    header.sender_id = 1;      // Example sender ID
-    header.receiver_id = 2;    // Example receiver ID
-    header.message_id = 12345; // Example message ID
-    header.payload_length = 0;
-
-    send(sock, &header, sizeof(header), 0);
-}
-
-// Function to send a chat message (a MessageHeader)
-void sendChatMessage(int sock, const string &message)
+// Function to send a message (MessageHeader)
+void sendMessage(int sock, uint8_t message_type, const string &message)
 {
     static uint32_t message_counter = 0; // Static counter for unique message IDs
 
     MessageHeader header;
     header.header_length = sizeof(MessageHeader);
-    header.message_type = 3; // CHAT
+    header.message_type = message_type; // CHAT
 
     // Set the current time as timestamp
     header.timestamp = static_cast<uint32_t>(time(nullptr));
@@ -55,10 +40,11 @@ void sendChatMessage(int sock, const string &message)
     // Combining MessageHeader and payload into single buffer:
 
     // Calculate the total size of the message
+    // size_t represents the size of an object in bytes
     size_t total_size = sizeof(header) + message.size();
 
     // Allocate memory for the combined buffer
-    uint8_t *buffer = new uint8_t[total_size];
+    int *buffer = new int[total_size];
 
     // Copy the header to the buffer
     memcpy(buffer, &header, sizeof(header));
@@ -66,7 +52,16 @@ void sendChatMessage(int sock, const string &message)
     // Copy the message payload to the buffer after the header
     memcpy(buffer + sizeof(header), message.c_str(), message.size());
 
+    /*
+    void *memcpy(void *dest, const void *src, size_t n);
+
+    dest: Pointer to the destination array where the content is to be copied.
+    src: Pointer to the source of data to be copied.
+    n: Number of bytes to copy.
+    */
+
     // Send the combined buffer over the socket
+    // Send all bytes of buffer through socket
     send(sock, buffer, total_size, 0);
 
     // Free the allocated memory
@@ -186,7 +181,7 @@ int main()
     }
 
     // Step 3: Send an online status request
-    sendOnlineStatusRequest(sock);
+    sendMessage(sock, 1, "");
 
     // Step 4: Create a thread to handle server responses
     // Threads allow the client to send and receive messages at the same time without blocking either operation aka listen for server msgs and send msgs at the same time
@@ -198,16 +193,16 @@ int main()
     while (true)
     {
         cout << "Enter message: ";
-        getline(cin, message); // TODO: make this non-blocking
+        getline(cin, message);
 
         if (message == "quit")
         {
-            break;
+            return 0;
         }
 
         if (message == "ON_REQ")
         {
-            sendOnlineStatusRequest(sock);
+            sendMessage(sock, 1, "");
             cout << "Sent online status request" << endl;
         }
         else
@@ -220,14 +215,14 @@ int main()
 
             // Display the timestamp and message
             cout << "Client [" << time_str << "]: " << message << endl;
-            sendChatMessage(sock, message);
+            sendMessage(sock, 3, message);
         }
     }
 
     // Step 6: Close the socket and clean up
     close(sock);
 
-    // join() - wait for thread to finish execution
+    // join() - wait for thread to finish execution before the main program exits
     responseThread.join();
 
     return 0;
