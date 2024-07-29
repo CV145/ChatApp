@@ -19,19 +19,7 @@ struct MessageHeader
     uint16_t receiver_id;
     uint32_t message_id;
     uint16_t payload_length;
-    uint16_t checksum;
 };
-
-// Function to calculate checksum
-uint16_t calculateChecksum(const uint8_t *data, size_t length)
-{
-    uint32_t sum = 0;
-    for (size_t i = 0; i < length; ++i)
-    {
-        sum += data[i];
-    }
-    return static_cast<uint16_t>(~sum);
-}
 
 // Function to send an online status request
 void sendOnlineStatusRequest(int sock)
@@ -44,35 +32,44 @@ void sendOnlineStatusRequest(int sock)
     header.receiver_id = 2;    // Example receiver ID
     header.message_id = 12345; // Example message ID
     header.payload_length = 0;
-    header.checksum = calculateChecksum(reinterpret_cast<const uint8_t *>(&header), sizeof(header) - sizeof(header.checksum));
 
     send(sock, &header, sizeof(header), 0);
 }
 
-// Function to send a chat message
+// Function to send a chat message (a MessageHeader)
 void sendChatMessage(int sock, const string &message)
 {
+    static uint32_t message_counter = 0; // Static counter for unique message IDs
+
     MessageHeader header;
     header.header_length = sizeof(MessageHeader);
     header.message_type = 3; // CHAT
 
     // Set the current time as timestamp
     header.timestamp = static_cast<uint32_t>(time(nullptr));
-    header.sender_id = 1;      // Example sender ID
-    header.receiver_id = 2;    // Example receiver ID
-    header.message_id = 12346; // Example message ID
+    header.sender_id = 2;                  // Client ID
+    header.receiver_id = 1;                // Server ID
+    header.message_id = ++message_counter; // Generate unique message ID
     header.payload_length = message.size();
-    header.checksum = 0; // Initial checksum
 
-    // Calculate checksum including the payload
+    // Combining MessageHeader and payload into single buffer:
+
+    // Calculate the total size of the message
     size_t total_size = sizeof(header) + message.size();
+
+    // Allocate memory for the combined buffer
     uint8_t *buffer = new uint8_t[total_size];
-    memcpy(buffer, &header, sizeof(header));
-    memcpy(buffer + sizeof(header), message.c_str(), message.size());
-    header.checksum = calculateChecksum(buffer, total_size);
+
+    // Copy the header to the buffer
     memcpy(buffer, &header, sizeof(header));
 
+    // Copy the message payload to the buffer after the header
+    memcpy(buffer + sizeof(header), message.c_str(), message.size());
+
+    // Send the combined buffer over the socket
     send(sock, buffer, total_size, 0);
+
+    // Free the allocated memory
     delete[] buffer;
 }
 
@@ -83,16 +80,18 @@ void handleServerResponse(int sock)
     char buffer[1024];
     while (true)
     {
+        // writes into the buffer from socket file descriptor
         int bytesRead = recv(sock, buffer, sizeof(buffer), 0);
         if (bytesRead > 0)
         {
+            // cast buffer into MessageHeader
             MessageHeader *header = reinterpret_cast<MessageHeader *>(buffer);
 
             // Convert timestamp to human-readable format
             time_t raw_time = header->timestamp;
             struct tm *time_info = localtime(&raw_time);
             char time_str[20];
-            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", time_info);
+            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", time_info); // FORMAT time into string
 
             // Display the timestamp and message content
             cout << "\n[" << time_str << "]: ";
@@ -206,15 +205,23 @@ int main()
             break;
         }
 
-        // Capture the current time
-        time_t raw_time = time(nullptr);
-        struct tm *time_info = localtime(&raw_time);
-        char time_str[20];
-        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", time_info);
+        if (message == "ON_REQ")
+        {
+            sendOnlineStatusRequest(sock);
+            cout << "Sent online status request" << endl;
+        }
+        else
+        {
+            // Capture the current time for display purposes
+            time_t raw_time = time(nullptr);
+            struct tm *time_info = localtime(&raw_time);
+            char time_str[20];
+            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", time_info);
 
-        // Display the timestamp and message
-        cout << "Client [" << time_str << "]: " << message << endl;
-        sendChatMessage(sock, message);
+            // Display the timestamp and message
+            cout << "Client [" << time_str << "]: " << message << endl;
+            sendChatMessage(sock, message);
+        }
     }
 
     // Step 6: Close the socket and clean up
