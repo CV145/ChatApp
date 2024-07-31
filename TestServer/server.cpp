@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <thread>
 
+// Using individual declarations to avoid std:: prefixes
 using namespace std;
 
 struct MessageHeader
@@ -18,20 +19,48 @@ struct MessageHeader
     uint16_t receiver_id;
     uint32_t message_id;
     uint16_t payload_length;
-    uint16_t checksum;
 };
 
-uint16_t calculateChecksum(const uint8_t *data, size_t length)
+// Function to send a message (MessageHeader)
+void sendMessage(int sock, uint8_t message_type, const string &message)
 {
-    uint32_t sum = 0;
-    for (size_t i = 0; i < length; ++i)
-    {
-        sum += data[i];
-    }
-    return static_cast<uint16_t>(~sum);
+    static int message_counter = 0; // Static counter for unique message IDs
+
+    MessageHeader header;
+    header.header_length = sizeof(MessageHeader);
+    header.message_type = message_type; // CHAT
+
+    // Set the current time as timestamp
+    header.timestamp = static_cast<uint32_t>(time(nullptr));
+    header.sender_id = 1;                  // Server ID
+    header.receiver_id = 2;                // Client ID
+    header.message_id = ++message_counter; // Generate unique message ID
+    header.payload_length = message.size();
+
+    // Combining MessageHeader and payload into single buffer:
+    // Calculate the total size of the message
+    // size_t represents the size of an object in bytes
+    size_t total_size = sizeof(header) + message.size();
+
+    // Allocate memory for the combined buffer
+    char *buffer = new char[total_size];
+
+    // Copy the header to the buffer
+    memcpy(buffer, &header, sizeof(header));
+
+    // Copy the message payload to the buffer after the header
+    memcpy(buffer + sizeof(header), message.c_str(), message.size());
+
+    // Send the combined buffer over the socket
+    // Send all bytes of buffer through socket
+    send(sock, buffer, total_size, 0);
+
+    // Free the allocated memory
+    delete[] buffer;
 }
 
-void handleClient(int client_fd)
+// Function to handle client responses
+void handleClientResponse(int client_fd)
 {
     MessageHeader header;
     while (true)
@@ -54,33 +83,20 @@ void handleClient(int client_fd)
         {
         case 1: // ON_REQ
             cout << "Received online status request" << endl;
-            MessageHeader response;
-            response.header_length = sizeof(MessageHeader);
-            response.message_type = 2; // ON_RES
-            response.timestamp = static_cast<uint32_t>(time(nullptr));
-            response.sender_id = header.receiver_id;
-            response.receiver_id = header.sender_id;
-            response.message_id = header.message_id;
-            response.payload_length = 0;
-            response.checksum = calculateChecksum(reinterpret_cast<const uint8_t *>(&response), sizeof(response) - sizeof(response.checksum));
-            if (send(client_fd, &response, sizeof(response), 0) < 0)
-            {
-                perror("Send error");
-                break;
-            }
+            // Send online status response
+            sendMessage(client_fd, 2, "Server is online");
             break;
-        case 3:
-        { // CHAT
-            cout << "Received chat message" << endl;
+        case 3: // CHAT
+        {
             char *payload = new char[header.payload_length];
             ssize_t payloadBytesRead = read(client_fd, payload, header.payload_length);
             if (payloadBytesRead != header.payload_length)
             {
-                cerr << "Payload read error" << endl;
+                cerr << "Payload read error: Expected " << header.payload_length << " bytes, but got " << payloadBytesRead << " bytes." << endl;
                 delete[] payload;
                 break;
             }
-            cout << "Message: " << string(payload, header.payload_length) << endl;
+            cout << "Client Message: " << string(payload, header.payload_length) << endl;
             delete[] payload;
 
             // Send ACK
@@ -92,7 +108,6 @@ void handleClient(int client_fd)
             ack.receiver_id = header.sender_id;
             ack.message_id = header.message_id;
             ack.payload_length = 0;
-            ack.checksum = calculateChecksum(reinterpret_cast<const uint8_t *>(&ack), sizeof(ack) - sizeof(ack.checksum));
             if (send(client_fd, &ack, sizeof(ack), 0) < 0)
             {
                 perror("Send error");
@@ -104,6 +119,22 @@ void handleClient(int client_fd)
             cerr << "Unknown message type received" << endl;
             break;
         }
+    }
+}
+
+// Function to handle sending messages from the server to the client
+void sendMessageToClient(int client_fd)
+{
+    string message;
+    while (true)
+    {
+        cout << "Enter message: ";
+        getline(cin, message);
+        if (message == "quit")
+        {
+            break;
+        }
+        sendMessage(client_fd, 3, message); // Use message type 3 for chat messages
     }
 }
 
@@ -159,11 +190,18 @@ int main()
         inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN);
         cout << "Connection accepted from " << client_ip << ":" << ntohs(client_address.sin_port) << endl;
 
-        // Handle the client in a separate thread
-        thread clientThread(handleClient, client_fd);
-        clientThread.detach();
+        // Handle client responses in a separate thread
+        thread clientResponseThread(handleClientResponse, client_fd);
+        clientResponseThread.detach();
+
+        // Handle sending messages to the client in the main thread
+        sendMessageToClient(client_fd);
+
+        // Close client socket after communication is done
+        close(client_fd);
     }
 
     close(server_fd);
+
     return 0;
 }

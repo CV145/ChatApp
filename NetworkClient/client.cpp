@@ -24,7 +24,7 @@ struct MessageHeader
 // Function to send a message (MessageHeader)
 void sendMessage(int sock, uint8_t message_type, const string &message)
 {
-    static uint32_t message_counter = 0; // Static counter for unique message IDs
+    static int message_counter = 0; // Static counter for unique message IDs
 
     MessageHeader header;
     header.header_length = sizeof(MessageHeader);
@@ -38,27 +38,18 @@ void sendMessage(int sock, uint8_t message_type, const string &message)
     header.payload_length = message.size();
 
     // Combining MessageHeader and payload into single buffer:
-
     // Calculate the total size of the message
     // size_t represents the size of an object in bytes
     size_t total_size = sizeof(header) + message.size();
 
     // Allocate memory for the combined buffer
-    int *buffer = new int[total_size];
+    char *buffer = new char[total_size];
 
     // Copy the header to the buffer
     memcpy(buffer, &header, sizeof(header));
 
     // Copy the message payload to the buffer after the header
     memcpy(buffer + sizeof(header), message.c_str(), message.size());
-
-    /*
-    void *memcpy(void *dest, const void *src, size_t n);
-
-    dest: Pointer to the destination array where the content is to be copied.
-    src: Pointer to the source of data to be copied.
-    n: Number of bytes to copy.
-    */
 
     // Send the combined buffer over the socket
     // Send all bytes of buffer through socket
@@ -94,20 +85,28 @@ void handleServerResponse(int sock)
             string message(buffer + sizeof(MessageHeader), header->payload_length);
             switch (header->message_type)
             {
+            case 1: // ON_REQ
+                cout << "Received online status request from server" << endl;
+                sendMessage(sock, 2, "Online status response"); // Respond with ON_RES
+                break;
             case 2: // ON_RES
-                cout << "Server: Received online status response" << endl;
+                cout << "Received online status response from server" << endl;
                 break;
             case 3: // CHAT
                 cout << "Server: " << message << endl;
+
+                // Send ACK for the received chat message
+                sendMessage(sock, 4, to_string(header->message_id));
+
                 break;
             case 4: // ACK
-                cout << "Server: Received ACK for message ID: " << header->message_id << endl;
+                cout << "Received ACK for message ID: " << header->message_id << endl;
                 break;
             case 5: // NACK
-                cerr << "Server: Received NACK for message ID: " << header->message_id << endl;
+                cerr << "Received NACK for message ID: " << header->message_id << endl;
                 break;
             case 6: // ERR
-                cout << "Server: Received error message: " << message << endl;
+                cout << "Received error message from server: " << message << endl;
                 break;
             default:
                 cerr << "Server: Unknown message type received" << endl;
