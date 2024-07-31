@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <thread>
 #include <ctime>
+#include <atomic>
 
 using namespace std;
 
@@ -23,89 +24,37 @@ struct MessageHeader {
     uint16_t checksum;
 };
 
-void socket_read(int sockfd)
-{
-    MessageHeader *myHeader;
-    cout << "Waiting on Msg\n";
-    char buff[1024];
-    while (1) {
-        ssize_t inBytes = recv(sockfd, buff, sizeof(buff), 0);
-        if (inBytes > 0)
-        {
-            myHeader = (MessageHeader *) buff;
-            cout << "Msg received\n";
-            time_t timeRaw = myHeader->timeStamp;
-            struct tm* timeInfo = localtime(&timeRaw);
-            char timeString[20];
-            strftime(timeString, sizeof(timeString), "%Y-%m-%d %H:%M%S", timeInfo);
-
-            cout << "Msg timestamp: " << timeString << "\n";
-
-            //
-            string message(buff + sizeof(MessageHeader), myHeader->payloadLen);
-
-            switch ((int)myHeader->messageType)
-            {
-                case 2:
-                    cout << "Case 2\n";
-                    break;
-                case 3:
-                    cout << "Chat message received: " << message << "\n";
-                    break;
-                case 4:
-                    cout << "Case 4\n";
-                    break;
-                case 5:
-                    cout << "Case 5\n";
-                    break;
-                case 6:
-                    cout << "Case 6\n";
-                    break;
-                default:
-                    cout << "Unknown message type: " << (int)myHeader->messageType << " received\n";
-                    break;
-            }
-        }
-        else if (inBytes == -1)
-        {
-            cerr << strerror(errno) << "\n";
-            close(sockfd);
-            EXIT_FAILURE;
-        }
-    }
-    //When message is received:
-        //1) determine message type
-        //2) determine sender
-        //3) perform appropriate functions, outputting to appropriate window
-}
+atomic<bool> exitThread{false};
 
 uint16_t checkSum_Gen(const uint8_t *data, size_t len)
 {
     uint32_t sum = 0;
     for (int i = 0; i < len; i++)
         sum += data[i];
-    
+
     return (uint16_t)sum;
 }
 
-void socket_SendMessage(int sockfd, const string& message)
+bool checkSum_Check(uint16_t checkSum, size_t len)
 {
-    while (1)
-    {
+    return true;
+}
+
+void socket_Send(int sockfd, const u_int8_t msgType, const string& message)
+{
     //When message is sent:
-        //1) determine message type
-        //2) write appropriate header
+        //1) write appropriate header
         MessageHeader myHeader;
         myHeader.headerLen = sizeof(MessageHeader); //Calculate after filling header?
-        myHeader.messageType = 3; //sample message value
+        myHeader.messageType = msgType;
         myHeader.timeStamp = (uint32_t)time(nullptr);
         myHeader.sender_id = 2; //sample id
         myHeader.receiver_id = 1; //sample id
         myHeader.message_id = 12345; //sample id
-        myHeader.payloadLen = 0; //sample length
-        myHeader.checksum = 0;
+        myHeader.payloadLen = message.size();
+        myHeader.checksum = 0; //calculate
         
-        size_t packetSize = sizeof(myHeader) + message.size();
+        size_t packetSize = myHeader.headerLen + myHeader.payloadLen;
         uint8_t *buff = new uint8_t[packetSize];
         memcpy(buff, &myHeader, sizeof(myHeader));
         memcpy(buff + sizeof(myHeader), message.c_str(), message.size());
@@ -114,8 +63,90 @@ void socket_SendMessage(int sockfd, const string& message)
 
         //4) pass message to TCP
         send(sockfd, buff, sizeof(myHeader), 0);
+}
+
+void socket_Receive(int sockfd)
+{
+    MessageHeader *myHeader;
+    int socketClosed, error=0;
+    socklen_t len = sizeof(error);
+    char buff[1024];
+    while (1) {
+        cout << "Waiting for Msg\n";
+        while (recv(sockfd, buff, sizeof(buff), MSG_DONTWAIT | MSG_PEEK) == -1)
+        {
+            if (exitThread.load() == 1)
+                return;
+        }
+        ssize_t inBytes = recv(sockfd, buff, sizeof(buff), 0);
+        if (inBytes > 0)
+        {
+        //When message is received:
+            //1) convert header
+            myHeader = reinterpret_cast<MessageHeader *>(buff);
+            cout << "Msg received\n";
+            time_t timeRaw = myHeader->timeStamp;
+            struct tm* timeInfo = localtime(&timeRaw);
+            char timeString[20];
+            strftime(timeString, sizeof(timeString), "%Y-%m-%d %H:%M%S", timeInfo);
+
+            cout << "Msg timestamp: " << timeString << "\n";
+            cout << "Msg type: " << (int)myHeader->messageType << ", Payload Length: " << myHeader->payloadLen << " bytes\n";
+
+            if (myHeader->payloadLen > sizeof(buff) - sizeof(myHeader))
+            {
+                cerr << "Message Length exceedes Buffer, dumping Message and sending Error\n";
+                socket_Send(sockfd, 6, to_string(myHeader->message_id));
+                continue;
+            }
+            else if (myHeader->checksum != 0)
+            {
+                cerr << "Invalid checksum, sending Error Message\n";
+                socket_Send(sockfd, 6, to_string(myHeader->message_id));
+                continue;
+            }
+            
+            string message(buff + sizeof(MessageHeader), myHeader->payloadLen);
+
+            //1) determine message type and perform appropriate functions
+            switch ((int)myHeader->messageType)
+            {
+                case 1:
+                    cout << "Status Request received from: " << (int)myHeader->sender_id << ", sending response\n";
+                    socket_Send(sockfd, 2, to_string(myHeader->message_id));
+                    break;
+                case 2:
+                    cout << "Status Response received, " << (int)myHeader->sender_id << " is online\n";
+                    break;
+                case 3:
+                    cout << "Chat Message received: " << message << "\n";
+                    socket_Send(sockfd, 4, to_string(myHeader->message_id));
+                    break;
+                case 4:
+                    cout << "Received ACK for Message " << message << "\n";
+                    break;
+                case 5:
+                    cout << "Received NACK for Message " << message << "\n";
+                    break;
+                case 6:
+                    cout << "Received Error for Message " << message << "\n";
+                    break;
+                default:
+                    cout << "Unknown message type: " << (int)myHeader->messageType << " received, sending Error Message\n";
+                    socket_Send(sockfd, 6, to_string(myHeader->message_id));
+                    break;
+            }
+        }
+        else if (inBytes == -1)
+        {
+            cerr << strerror(errno) << "\n";
+            close(sockfd);
+            return;
+        }
     }
 }
+
+
 
 int main (){
     //Declare variables
@@ -123,46 +154,82 @@ int main (){
     int sockfd, isock;
     unsigned int clen;
     unsigned short port = 8080;
+    bool isError;
+    int loops = 0;
 
 //Establishing Connection
-//1) setup socket
-    if((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-        printf("Error: socket creation failed\n");
-    printf("Socket created\n");
+    do {
+        isError = false;
 
-//2) bind socket 
-    memset(&saddr, '\0', sizeof(saddr)); 
-    saddr.sin_family = AF_INET;
-    saddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    saddr.sin_port = htons(port);
-    if ((bind(sockfd, (struct sockaddr*) &saddr, sizeof(saddr)) < 0))
-        cout << "binding failed Error: " << strerror(errno) << "\n";
-    printf("Socket bound\n");
+        if (loops > 1)
+        {
+            cerr << "Failed to establish connection after 3 attempts, exiting program\n";
+            return EXIT_FAILURE;
+        }
 
-//3) listen for client
-    if (listen(sockfd, 5) < 0)
-        printf("Error: listening failed\n");
-    printf("socket listening\n");
+        //1) setup socket
+        if((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+        {
+            cerr << strerror(errno) << "\n";
+            close(sockfd);
+            isError = EXIT_FAILURE;
+        }
+        printf("Socket created\n");
 
-//4) accept connection
-    clen = sizeof(caddr);
-    if ((isock = accept(sockfd, (struct sockaddr *) &caddr, &clen)) < 0)
-        printf("Error: accepting failed\n");
+        //2) bind socket 
+        memset(&saddr, '\0', sizeof(saddr)); 
+        saddr.sin_family = AF_INET;
+        saddr.sin_addr.s_addr = htonl(INADDR_ANY);
+        saddr.sin_port = htons(port);
+
+        if ((bind(sockfd, (struct sockaddr*) &saddr, sizeof(saddr)) < 0))
+        {
+            cerr << strerror(errno) << "\n";
+            close(sockfd);
+            isError = EXIT_FAILURE;
+        }
+        printf("Socket bound\n");
+
+        //3) listen for client
+        if (listen(sockfd, 5) < 0)
+        {
+            cerr << strerror(errno) << "\n";
+            close(sockfd);
+            isError = EXIT_FAILURE;
+        }
+        printf("Socket listening\n");
+
+        //4) accept connection
+        clen = sizeof(caddr);
+        if ((isock = accept(sockfd, (struct sockaddr *) &caddr, &clen)) < 0)
+        {
+            cerr << strerror(errno) << "\n";
+            close(sockfd);
+            isError = EXIT_FAILURE;
+        }
+    } while (isError);
     printf("Client connection accepted\n");
 
-    string message = "hello otherworld\n";
-
-//TODO: Add in multithreading to execute messaging
     //create thread to handle message receiving
-    socket_read(isock);
-        
-    //create thread to handle message sending
-    //thread t1(socket_SendMessage, sockfd, message);
-    
-    //wait for threads to finish execution
-    //t1.join();
+    thread t1(socket_Receive, isock);
+
+    string message;
+
+    while (1)
+    {
+        cout << "Enter Message, or 'e' to exit\n";
+        getline(cin, message);
+        if (message == "e")
+            break;
+
+        socket_Send(isock, 3, message);
+    }
 
 //5) close socket
     close(sockfd);
     cout << "Socket closed\n";
+    exitThread.store(true);
+
+    t1.join();
+    cout << "Thread(s) joined\n";
 }

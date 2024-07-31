@@ -30,7 +30,8 @@ uint16_t calculateChecksum(const uint8_t *data, size_t length)
     {
         sum += data[i];
     }
-    return static_cast<uint16_t>(~sum);
+    //return static_cast<uint16_t>(~sum);
+    return 0;
 }
 
 // Function to send an online status request
