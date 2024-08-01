@@ -25,6 +25,7 @@ struct MessageHeader {
 };
 
 atomic<bool> exitThread{false};
+atomic<uint32_t> messageCount{0};
 
 uint16_t checkSum_Gen(const uint8_t *data, size_t len)
 {
@@ -35,7 +36,7 @@ uint16_t checkSum_Gen(const uint8_t *data, size_t len)
     return (uint16_t)sum;
 }
 
-bool checkSum_Check(uint16_t checkSum, size_t len)
+bool checkSum_Check(uint16_t checkSum)
 {
     return true;
 }
@@ -59,10 +60,10 @@ void socket_Send(int sockfd, const u_int8_t msgType, const string& message)
         memcpy(buff, &myHeader, sizeof(myHeader));
         memcpy(buff + sizeof(myHeader), message.c_str(), message.size());
         myHeader.checksum = checkSum_Gen(buff, packetSize);
-        memcpy(buff, &myHeader, sizeof(myHeader));
+        //memcpy(buff, &myHeader, sizeof(myHeader));
 
         //4) pass message to TCP
-        send(sockfd, buff, sizeof(myHeader), 0);
+        send(sockfd, buff, packetSize, 0);
 }
 
 void socket_Receive(int sockfd)
@@ -84,14 +85,12 @@ void socket_Receive(int sockfd)
         //When message is received:
             //1) convert header
             myHeader = reinterpret_cast<MessageHeader *>(buff);
-            cout << "Msg received\n";
             time_t timeRaw = myHeader->timeStamp;
             struct tm* timeInfo = localtime(&timeRaw);
             char timeString[20];
             strftime(timeString, sizeof(timeString), "%Y-%m-%d %H:%M%S", timeInfo);
 
-            cout << "Msg timestamp: " << timeString << "\n";
-            cout << "Msg type: " << (int)myHeader->messageType << ", Payload Length: " << myHeader->payloadLen << " bytes\n";
+            cout << "Timestamp: " << timeString << ", Type: " << (int)myHeader->messageType << ", Payload Length: " << myHeader->payloadLen << " bytes\n";
 
             if (myHeader->payloadLen > sizeof(buff) - sizeof(myHeader))
             {
@@ -99,7 +98,7 @@ void socket_Receive(int sockfd)
                 socket_Send(sockfd, 6, to_string(myHeader->message_id));
                 continue;
             }
-            else if (myHeader->checksum != 0)
+            else if (!checkSum_Check(myHeader->checksum))
             {
                 cerr << "Invalid checksum, sending Error Message\n";
                 socket_Send(sockfd, 6, to_string(myHeader->message_id));
@@ -136,10 +135,12 @@ void socket_Receive(int sockfd)
                     socket_Send(sockfd, 6, to_string(myHeader->message_id));
                     break;
             }
+
+            cout << "Enter Message or 'e' to exit\n";
         }
-        else if (inBytes == -1)
+        else if (inBytes == 0)
         {
-            cerr << strerror(errno) << "\n";
+            cout << "Connection has been closed\n";
             close(sockfd);
             return;
         }
@@ -159,11 +160,26 @@ int main (){
 
 //Establishing Connection
     do {
+        /*
+        if (isError)
+        {
+            string reattempt;
+            cout << "Connection Failed, would you like to reattempt? y/n\n";
+            getline(cin, reattempt);
+            
+            if (reattempt == "y")
+                close(sockfd);
+            else if ()
+        }
+        */
         isError = false;
+        loops++;
 
-        if (loops > 1)
+
+        if (loops > 2)
         {
             cerr << "Failed to establish connection after 3 attempts, exiting program\n";
+            close(sockfd);
             return EXIT_FAILURE;
         }
 
