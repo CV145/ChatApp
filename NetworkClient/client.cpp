@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <ctime>
 #include <thread>
+#include <atomic>
 
 // Using individual declarations to avoid std:: prefixes
 using namespace std;
@@ -124,6 +125,19 @@ void handleServerResponse(int sock)
             cout << "Enter message: ";
             cout.flush();
         }
+        else if (bytesRead == 0)
+        {
+            // Connection closed by server
+            cout << "\nServer disconnected." << endl;
+            close(sock);
+            return;
+        }
+        else
+        {
+            cerr << "Error receiving message: " << strerror(errno) << endl;
+            close(sock);
+            return;
+        }
     }
 }
 
@@ -140,14 +154,8 @@ int main()
     }
 
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(8080);                   // Port number for the server
-    serv_addr.sin_addr.s_addr = inet_addr("127.0.0.1"); // Server IP address, REPLACE this using server IP (use Windows wireless IP forwarded to WSL IP). Client and server must be connected to the same wifi network
-
-    /*
-    In socket programming, the client connects to the server program running on a specific device by targeting the server's IP address and port number.
-
-    The port number specifies the specific service or application on the server device that the client wants to connect to. For example, 8080 is the port where the server program is listening for incoming connections.
-    */
+    serv_addr.sin_port = htons(8080);                        // Port number for the server
+    serv_addr.sin_addr.s_addr = inet_addr("192.168.190.19"); // Server IP address, REPLACE this using server IP (use Windows wireless IP forwarded to WSL IP). Client and server must be connected to the same wifi network
 
     // Step 2: Connect to the server, -1 means error
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
@@ -191,8 +199,7 @@ int main()
     sendOnlineStatusRequest(sock);
 
     // Step 4: Create a thread to handle server responses
-    // Threads allow the client to send and receive messages at the same time without blocking either operation aka listen for server msgs and send msgs at the same time
-    thread responseThread(handleServerResponse, sock); // This thread runs the 'handleServerResponse' function which gets 'sock' as input
+    thread responseThread(handleServerResponse, sock);
 
     // Step 5: Main loop to send chat messages
     string message;
