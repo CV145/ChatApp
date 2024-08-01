@@ -30,7 +30,7 @@ atomic<uint32_t> messageCount{0};
 uint16_t checkSum_Gen(const uint8_t *data, size_t len)
 {
     uint32_t sum = 0;
-    for (int i = 0; i < len; i++)
+    for (uint i = 0; i < len; i++)
         sum += data[i];
 
     return (uint16_t)sum;
@@ -69,8 +69,7 @@ void socket_Send(int sockfd, const u_int8_t msgType, const string& message)
 void socket_Receive(int sockfd)
 {
     MessageHeader *myHeader;
-    int socketClosed, error=0;
-    socklen_t len = sizeof(error);
+    //int error=0;
     char buff[1024];
     while (1) {
         cout << "Waiting for Msg\n";

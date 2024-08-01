@@ -1,14 +1,17 @@
+#compiler and compiler flags
 CXX = g++
-CXXFLAGS = -Wall -std=c++11
-LDFLAGS = -lncurses -lpthread
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2
 
+#executable
 TARGET = server
-SRCS = server.cpp
 
+# Define the source files and object files
+SRC = server.cpp
+OBJ = $(SRC:.cpp=.o)
+
+# Default target to build the executable
 all: $(TARGET)
 
-$(TARGET): $(SRCS)
-	$(CXX) $(CXXFLAGS) -o $(TARGET) $(SRCS) $(LDFLAGS)
-
-clean:
-	rm -f $(TARGET)
+# Rule to build the executable
+$(TARGET): $(OBJ)
+	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJ)
