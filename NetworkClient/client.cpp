@@ -20,43 +20,61 @@ struct MessageHeader
     uint16_t receiver_id;
     uint32_t message_id;
     uint16_t payload_length;
+    uint16_t checksum;
 };
 
-// Function to send a message (MessageHeader)
-void sendMessage(int sock, uint8_t message_type, const string &message)
+// Function to calculate checksum
+uint16_t calculateChecksum(const uint8_t *data, size_t length)
 {
-    static int message_counter = 0; // Static counter for unique message IDs
+    uint32_t sum = 0;
+    for (size_t i = 0; i < length; ++i)
+    {
+        sum += data[i];
+    }
+    //return static_cast<uint16_t>(~sum);
+    return 0;
+}
 
+// Function to send an online status request
+void sendOnlineStatusRequest(int sock)
+{
     MessageHeader header;
     header.header_length = sizeof(MessageHeader);
-    header.message_type = message_type; // CHAT
+    header.message_type = 1; // ON_REQ
+    header.timestamp = static_cast<uint32_t>(time(nullptr));
+    header.sender_id = 1;      // Example sender ID
+    header.receiver_id = 2;    // Example receiver ID
+    header.message_id = 12345; // Example message ID
+    header.payload_length = 0;
+    header.checksum = calculateChecksum(reinterpret_cast<const uint8_t *>(&header), sizeof(header) - sizeof(header.checksum));
+
+    send(sock, &header, sizeof(header), 0);
+}
+
+// Function to send a chat message
+void sendChatMessage(int sock, const string &message)
+{
+    MessageHeader header;
+    header.header_length = sizeof(MessageHeader);
+    header.message_type = 3; // CHAT
 
     // Set the current time as timestamp
     header.timestamp = static_cast<uint32_t>(time(nullptr));
-    header.sender_id = 2;                  // Client ID
-    header.receiver_id = 1;                // Server ID
-    header.message_id = ++message_counter; // Generate unique message ID
+    header.sender_id = 1;      // Example sender ID
+    header.receiver_id = 2;    // Example receiver ID
+    header.message_id = 12346; // Example message ID
     header.payload_length = message.size();
+    header.checksum = 0; // Initial checksum
 
-    // Combining MessageHeader and payload into single buffer:
-    // Calculate the total size of the message
-    // size_t represents the size of an object in bytes
+    // Calculate checksum including the payload
     size_t total_size = sizeof(header) + message.size();
-
-    // Allocate memory for the combined buffer
-    char *buffer = new char[total_size];
-
-    // Copy the header to the buffer
+    uint8_t *buffer = new uint8_t[total_size];
+    memcpy(buffer, &header, sizeof(header));
+    memcpy(buffer + sizeof(header), message.c_str(), message.size());
+    header.checksum = calculateChecksum(buffer, total_size);
     memcpy(buffer, &header, sizeof(header));
 
-    // Copy the message payload to the buffer after the header
-    memcpy(buffer + sizeof(header), message.c_str(), message.size());
-
-    // Send the combined buffer over the socket
-    // Send all bytes of buffer through socket
     send(sock, buffer, total_size, 0);
-
-    // Free the allocated memory
     delete[] buffer;
 }
 
@@ -67,18 +85,16 @@ void handleServerResponse(int sock)
     char buffer[1024];
     while (true)
     {
-        // writes into the buffer from socket file descriptor
         int bytesRead = recv(sock, buffer, sizeof(buffer), 0);
         if (bytesRead > 0)
         {
-            // cast buffer into MessageHeader
             MessageHeader *header = reinterpret_cast<MessageHeader *>(buffer);
 
             // Convert timestamp to human-readable format
             time_t raw_time = header->timestamp;
             struct tm *time_info = localtime(&raw_time);
             char time_str[20];
-            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", time_info); // FORMAT time into string
+            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", time_info);
 
             // Display the timestamp and message content
             cout << "\n[" << time_str << "]: ";
@@ -86,28 +102,20 @@ void handleServerResponse(int sock)
             string message(buffer + sizeof(MessageHeader), header->payload_length);
             switch (header->message_type)
             {
-            case 1: // ON_REQ
-                cout << "Received online status request from server" << endl;
-                sendMessage(sock, 2, "Online status response"); // Respond with ON_RES
-                break;
             case 2: // ON_RES
-                cout << "Received online status response from server" << endl;
+                cout << "Server: Received online status response" << endl;
                 break;
             case 3: // CHAT
                 cout << "Server: " << message << endl;
-
-                // Send ACK for the received chat message
-                sendMessage(sock, 4, to_string(header->message_id));
-
                 break;
             case 4: // ACK
-                cout << "Received ACK for message ID: " << header->message_id << endl;
+                cout << "Server: Received ACK for message ID: " << header->message_id << endl;
                 break;
             case 5: // NACK
-                cerr << "Received NACK for message ID: " << header->message_id << endl;
+                cerr << "Server: Received NACK for message ID: " << header->message_id << endl;
                 break;
             case 6: // ERR
-                cout << "Received error message from server: " << message << endl;
+                cout << "Server: Received error message: " << message << endl;
                 break;
             default:
                 cerr << "Server: Unknown message type received" << endl;
@@ -188,7 +196,7 @@ int main()
     }
 
     // Step 3: Send an online status request
-    sendMessage(sock, 1, "");
+    sendOnlineStatusRequest(sock);
 
     // Step 4: Create a thread to handle server responses
     thread responseThread(handleServerResponse, sock);
@@ -199,36 +207,28 @@ int main()
     while (true)
     {
         cout << "Enter message: ";
-        getline(cin, message);
+        getline(cin, message); // TODO: make this non-blocking
 
         if (message == "quit")
         {
             break;
         }
 
-        if (message == "ON_REQ")
-        {
-            sendMessage(sock, 1, "");
-            cout << "Sent online status request" << endl;
-        }
-        else
-        {
-            // Capture the current time for display purposes
-            time_t raw_time = time(nullptr);
-            struct tm *time_info = localtime(&raw_time);
-            char time_str[20];
-            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", time_info);
+        // Capture the current time
+        time_t raw_time = time(nullptr);
+        struct tm *time_info = localtime(&raw_time);
+        char time_str[20];
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", time_info);
 
-            // Display the timestamp and message
-            cout << "Client [" << time_str << "]: " << message << endl;
-            sendMessage(sock, 3, message);
-        }
+        // Display the timestamp and message
+        cout << "Client [" << time_str << "]: " << message << endl;
+        sendChatMessage(sock, message);
     }
 
     // Step 6: Close the socket and clean up
     close(sock);
 
-    // join() - wait for thread to finish execution before the main program exits
+    // join() - wait for thread to finish execution
     responseThread.join();
 
     return 0;
